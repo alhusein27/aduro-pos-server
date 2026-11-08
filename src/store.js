@@ -16,6 +16,8 @@ class MemoryStore {
     this.devicesByTokenHash = new Map();
     this.joinCodes = new Map();
     this.salesByShop = new Map();
+    this.debtorsByShop = new Map();
+    this.summaryByShop = new Map();
     this.entries = [];
     this.seqCounter = 0;
   }
@@ -90,6 +92,27 @@ class MemoryStore {
   async listSales(shopId) {
     const byId = this.salesByShop.get(shopId);
     return byId ? [...byId.values()] : [];
+  }
+
+  // Keeps the newest copy of a debtor, with the balance the till
+  // worked out from its ledger.
+  async upsertDebtor(shopId, debtorId, payload) {
+    if (!this.debtorsByShop.has(shopId)) this.debtorsByShop.set(shopId, new Map());
+    this.debtorsByShop.get(shopId).set(debtorId, payload);
+  }
+
+  async listDebtors(shopId) {
+    const byId = this.debtorsByShop.get(shopId);
+    return byId ? [...byId.values()] : [];
+  }
+
+  // Keeps the newest stock picture for the shop.
+  async saveSummary(shopId, payload) {
+    this.summaryByShop.set(shopId, payload);
+  }
+
+  async getSummary(shopId) {
+    return this.summaryByShop.get(shopId) || null;
   }
 
   async listEntriesSince(shopId, since, limit = 500) {
@@ -189,6 +212,18 @@ class PgStore {
         payload jsonb NOT NULL,
         updated_at text NOT NULL,
         PRIMARY KEY (shop_id, sale_id)
+      );
+      CREATE TABLE IF NOT EXISTS debtors (
+        shop_id text NOT NULL REFERENCES shops(id),
+        debtor_id text NOT NULL,
+        payload jsonb NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (shop_id, debtor_id)
+      );
+      CREATE TABLE IF NOT EXISTS shop_summaries (
+        shop_id text PRIMARY KEY REFERENCES shops(id),
+        payload jsonb NOT NULL,
+        updated_at text NOT NULL
       );
       CREATE TABLE IF NOT EXISTS entries (
         seq bigserial PRIMARY KEY,
@@ -308,6 +343,36 @@ class PgStore {
   async listSales(shopId) {
     const result = await this.pool.query('SELECT payload FROM sales WHERE shop_id = $1', [shopId]);
     return result.rows.map((row) => row.payload);
+  }
+
+  async upsertDebtor(shopId, debtorId, payload) {
+    await this.pool.query(
+      `INSERT INTO debtors (shop_id, debtor_id, payload, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (shop_id, debtor_id) DO UPDATE
+       SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [shopId, debtorId, JSON.stringify(payload), new Date().toISOString()],
+    );
+  }
+
+  async listDebtors(shopId) {
+    const result = await this.pool.query('SELECT payload FROM debtors WHERE shop_id = $1', [shopId]);
+    return result.rows.map((row) => row.payload);
+  }
+
+  async saveSummary(shopId, payload) {
+    await this.pool.query(
+      `INSERT INTO shop_summaries (shop_id, payload, updated_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (shop_id) DO UPDATE
+       SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [shopId, JSON.stringify(payload), new Date().toISOString()],
+    );
+  }
+
+  async getSummary(shopId) {
+    const result = await this.pool.query('SELECT payload FROM shop_summaries WHERE shop_id = $1', [shopId]);
+    return result.rows.length ? result.rows[0].payload : null;
   }
 
   async listEntriesSince(shopId, since, limit = 500) {

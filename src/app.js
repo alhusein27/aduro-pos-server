@@ -348,6 +348,23 @@ function createApp(store, options = {}) {
             continue;
           }
         }
+        if (entry.kind === 'debtor') {
+          const payload = entry.payload;
+          const hasId = typeof payload.id === 'string' && payload.id !== '';
+          const hasBalance = typeof payload.balancePesewas === 'number'
+            && Number.isFinite(payload.balancePesewas);
+          if (!hasId || !hasBalance) {
+            reject('This debtor is missing its id or its balance.');
+            continue;
+          }
+        }
+        if (entry.kind === 'stock_summary') {
+          const payload = entry.payload;
+          if (typeof payload.date !== 'string' || payload.date === '') {
+            reject('This stock summary is missing its date.');
+            continue;
+          }
+        }
         const record = {
           shopId: req.device.shopId,
           entryId: entry.id,
@@ -370,6 +387,12 @@ function createApp(store, options = {}) {
         accepted.push(entry.id);
         if (isSaleKind) {
           await store.upsertSale(req.device.shopId, entry.payload.id, entry.payload);
+        }
+        if (entry.kind === 'debtor') {
+          await store.upsertDebtor(req.device.shopId, entry.payload.id, entry.payload);
+        }
+        if (entry.kind === 'stock_summary') {
+          await store.saveSummary(req.device.shopId, entry.payload);
         }
       }
       return res.status(200).json({ accepted, duplicates, rejected });
@@ -406,9 +429,11 @@ function createApp(store, options = {}) {
       const allSales = await store.listSales(req.device.shopId);
       const today = accraToday();
       const todaysSales = allSales.filter((sale) => accraDateOf(sale.createdAt) === today);
+      const stockSummary = await store.getSummary(req.device.shopId);
       return res.status(200).json({
         date: today,
         ...computeTotals(todaysSales),
+        stockSummary,
       });
     } catch (err) {
       return next(err);
@@ -428,6 +453,20 @@ function createApp(store, options = {}) {
         .filter((sale) => accraDateOf(sale.createdAt) === date)
         .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
       return res.status(200).json({ date, sales });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // ---- The credit book, as the till last sent it up. ----
+  app.get('/api/owner/credit', requireDevice, requireOwner, async (req, res, next) => {
+    try {
+      const all = await store.listDebtors(req.device.shopId);
+      const debtors = all
+        .filter((d) => d && typeof d.balancePesewas === 'number' && d.balancePesewas > 0)
+        .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+      const totalOwedPesewas = debtors.reduce((sum, d) => sum + d.balancePesewas, 0);
+      return res.status(200).json({ debtors, totalOwedPesewas });
     } catch (err) {
       return next(err);
     }

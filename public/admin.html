@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aduro POS Admin</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F6F1E7;
+    color: #14213A;
+    font-size: 16px;
+    line-height: 1.45;
+  }
+  header {
+    background: #0F2340;
+    color: #FFFFFF;
+    padding: 18px 16px;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; font-size: 14px; color: #CFD8E6; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  .card {
+    background: #FFFFFF;
+    border: 1px solid #E4DCC6;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  h2 { font-size: 20px; margin: 4px 0 12px; }
+  h3 { font-size: 17px; margin: 0 0 10px; }
+  label { display: block; font-weight: bold; font-size: 15px; margin: 12px 0 6px; }
+  input {
+    width: 100%;
+    font-size: 16px;
+    padding: 12px;
+    min-height: 48px;
+    border: 1.5px solid #B9C0CC;
+    border-radius: 10px;
+    background: #FFFFFF;
+  }
+  button {
+    font-size: 16px;
+    font-weight: bold;
+    min-height: 48px;
+    padding: 10px 18px;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+  }
+  .btn-gold { background: #D4A62A; color: #0F2340; width: 100%; }
+  .btn-navy { background: #0F2340; color: #FFFFFF; }
+  .btn-quiet { background: #FFFFFF; color: #0F2340; border: 1.5px solid #0F2340; }
+  .btnlink {
+    display: inline-flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 10px 18px;
+    border-radius: 10px;
+    background: #0F2340;
+    color: #FFFFFF;
+    font-size: 16px;
+    font-weight: bold;
+    text-decoration: none;
+  }
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .toolbar h2 { margin: 0; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .error {
+    background: #FDECEB;
+    color: #8F1D12;
+    border: 1px solid #F2B8AE;
+    padding: 12px;
+    border-radius: 10px;
+    margin: 12px 0;
+    font-size: 15px;
+  }
+  .notice {
+    background: #FDF6E0;
+    border: 1px solid #D4A62A;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 15px;
+    margin-bottom: 12px;
+  }
+  .bigcode {
+    font-size: 24px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    word-break: break-all;
+    margin: 4px 0 8px;
+  }
+  .meta { font-size: 14px; color: #44506A; }
+  .hidden { display: none; }
+  .line { border-top: 1px solid #EEE3C2; padding: 10px 0; }
+  .line:first-child { border-top: none; padding-top: 0; }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    border-top: 1px solid #EEE3C2;
+    padding: 10px 0;
+  }
+  .stat:first-child { border-top: none; padding-top: 0; }
+  .money { font-weight: bold; white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aduro POS Admin</h1>
+  <p>Founder portal. Create shops and see how each shop is doing.</p>
+</header>
+<main>
+
+  <section id="viewSignin">
+    <div class="card">
+      <h2>Sign in</h2>
+      <p>Enter the admin key for this server. It is the ADMIN_KEY value set on the server. The key is kept only in this browser tab while you work, and it is never saved on the server by this page.</p>
+      <div id="signinError" class="error hidden"></div>
+      <form id="signinForm">
+        <label for="adminKeyInput">Admin key</label>
+        <input id="adminKeyInput" type="password" autocomplete="current-password">
+        <p><button type="submit" class="btn-gold">Open portal</button></p>
+      </form>
+    </div>
+  </section>
+
+  <section id="viewShops" class="hidden">
+    <div class="toolbar">
+      <h2>Shops</h2>
+      <div class="row">
+        <button id="refreshBtn" class="btn-quiet" type="button">Refresh</button>
+        <button id="logoutBtn" class="btn-quiet" type="button">Log out</button>
+      </div>
+    </div>
+    <div id="shopsError" class="error hidden"></div>
+
+    <div class="card">
+      <h3>Create a shop</h3>
+      <p class="meta">Create a shop after the owner has paid. You will get a shop code and an owner token to give to the owner.</p>
+      <form id="createForm">
+        <label for="shopNameInput">Shop name</label>
+        <input id="shopNameInput" type="text" required>
+        <label for="shopTownInput">Town</label>
+        <input id="shopTownInput" type="text">
+        <label for="ownerNameInput">Owner name</label>
+        <input id="ownerNameInput" type="text" required>
+        <p><button type="submit" class="btn-gold">Create shop</button></p>
+      </form>
+    </div>
+
+    <div id="createdPanel" class="card hidden">
+      <h3>Shop created</h3>
+      <div class="notice">Give these to the shop owner. The owner token is shown only this once. Write it down or send it now, because it cannot be seen again after this panel closes.</div>
+      <p class="meta">Shop code</p>
+      <p class="bigcode" id="createdCode"></p>
+      <p><button class="btn-quiet" id="copyCodeBtn" type="button">Copy shop code</button></p>
+      <p class="meta">Owner token</p>
+      <p class="bigcode" id="createdToken"></p>
+      <p><button class="btn-quiet" id="copyTokenBtn" type="button">Copy owner token</button></p>
+      <p><a id="waLink" class="btnlink" href="#" target="_blank" rel="noopener">Send on WhatsApp</a></p>
+      <p><button class="btn-quiet" id="closeCreatedBtn" type="button">Done</button></p>
+    </div>
+
+    <div id="shopList"></div>
+  </section>
+
+  <section id="viewDetail" class="hidden">
+    <p><button id="backBtn" class="btn-quiet" type="button">Back to shops</button></p>
+    <div id="detailError" class="error hidden"></div>
+    <div class="card">
+      <h2 id="detailName"></h2>
+      <p class="meta" id="detailMeta"></p>
+    </div>
+    <div class="card">
+      <h3>Devices</h3>
+      <div id="detailDevices"></div>
+    </div>
+    <div class="card">
+      <h3>Today</h3>
+      <div id="detailToday"></div>
+    </div>
+    <div class="card">
+      <h3>Credit book</h3>
+      <div id="detailPending"></div>
+    </div>
+    <div class="card">
+      <h3>Recent sales</h3>
+      <div id="detailSales"></div>
+    </div>
+  </section>
+
+</main>
+<script>
+  var KEY_NAME = 'aduroPosAdminKey';
+  var adminKey = '';
+  try { adminKey = sessionStorage.getItem(KEY_NAME) || ''; } catch (e) { adminKey = ''; }
+
+  function el(id) { return document.getElementById(id); }
+
+  function esc(value) {
+    return String(value === null || value === undefined ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function formatMoney(pesewas) {
+    var value = Number(pesewas);
+    if (!Number.isFinite(value)) value = 0;
+    var sign = value < 0 ? '-' : '';
+    var abs = Math.abs(Math.round(value));
+    var cedis = Math.floor(abs / 100);
+    var rest = abs % 100;
+    var grouped = String(cedis).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return sign + 'GH₵' + grouped + '.' + (rest < 10 ? '0' : '') + rest;
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function formatSeen(iso) {
+    if (!iso) return 'Not seen yet';
+    var d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'Not seen yet';
+    var time = d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return formatDate(iso) + ', ' + time;
+  }
+
+  function showView(name) {
+    el('viewSignin').classList.toggle('hidden', name !== 'signin');
+    el('viewShops').classList.toggle('hidden', name !== 'shops');
+    el('viewDetail').classList.toggle('hidden', name !== 'detail');
+  }
+
+  function showError(id, message) {
+    var box = el(id);
+    if (message) {
+      box.textContent = message;
+      box.classList.remove('hidden');
+    } else {
+      box.textContent = '';
+      box.classList.add('hidden');
+    }
+  }
+
+  function api(path, options) {
+    var opts = options || {};
+    var headers = { 'x-admin-key': adminKey };
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    return fetch(path, { method: opts.method || 'GET', headers: headers, body: opts.body })
+      .then(function (res) {
+        return res.json().catch(function () { return null; }).then(function (json) {
+          if (!res.ok) {
+            var err = new Error(json && json.error ? json.error : 'Something went wrong. Please try again.');
+            err.status = res.status;
+            throw err;
+          }
+          return json;
+        });
+      });
+  }
+
+  function backToSignin(message) {
+    adminKey = '';
+    try { sessionStorage.removeItem(KEY_NAME); } catch (e) {}
+    el('adminKeyInput').value = '';
+    showError('signinError', message || '');
+    showView('signin');
+  }
+
+  function renderShops(shops) {
+    var list = el('shopList');
+    list.innerHTML = '';
+    if (!shops || shops.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'card';
+      empty.innerHTML = '<p>No shops yet. Create the first shop with the form above.</p>';
+      list.appendChild(empty);
+      return;
+    }
+    shops.forEach(function (shop) {
+      var card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML =
+        '<h3>' + esc(shop.name) + '</h3>' +
+        '<p class="meta">Town: ' + esc(shop.town || 'Not given') + '<br>' +
+        'Shop code: <strong>' + esc(shop.code) + '</strong><br>' +
+        'Owner: ' + esc(shop.ownerName) + '<br>' +
+        'Devices: ' + esc(shop.deviceCount) + ' &nbsp; Sales: ' + esc(shop.salesCount) + '<br>' +
+        'Created: ' + esc(formatDate(shop.createdAt)) + '</p>' +
+        '<p><button type="button" class="btn-navy" data-view-shop="' + esc(shop.id) + '">View</button></p>';
+      list.appendChild(card);
+    });
+  }
+
+  function loadShops() {
+    showError('shopsError', '');
+    return api('/admin/api/shops').then(function (data) {
+      renderShops(data.shops);
+    }).catch(function (err) {
+      if (err.status === 401 || err.status === 503) {
+        backToSignin(err.message);
+      } else {
+        showError('shopsError', err.message);
+      }
+    });
+  }
+
+  function showCreated(created, shopName) {
+    el('createdCode').textContent = created.shopCode;
+    el('createdToken').textContent = created.ownerToken;
+    var message = 'Your Aduro POS shop is ready.\n'
+      + 'Shop name: ' + shopName + '\n'
+      + 'Shop code: ' + created.shopCode + '\n'
+      + 'Owner token: ' + created.ownerToken + '\n'
+      + 'Keep the owner token private. Do not share it with anyone else.';
+    el('waLink').href = 'https://wa.me/?text=' + encodeURIComponent(message);
+    el('createdPanel').classList.remove('hidden');
+    el('createdPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function copyText(text, button) {
+    function done() {
+      var old = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = old; }, 1500);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { fallbackCopy(text); done(); });
+    } else {
+      fallbackCopy(text);
+      done();
+    }
+  }
+
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+  }
+
+  function renderDetail(data) {
+    var shop = data.shop;
+    el('detailName').textContent = shop.name;
+    el('detailMeta').innerHTML =
+      'Town: ' + esc(shop.town || 'Not given') + '<br>' +
+      'Shop code: <strong>' + esc(shop.code) + '</strong><br>' +
+      'Owner: ' + esc(shop.ownerName) + '<br>' +
+      'Created: ' + esc(formatDate(shop.createdAt)) + '<br>' +
+      'Devices: ' + esc(shop.deviceCount) + ' &nbsp; Sales: ' + esc(shop.salesCount);
+
+    var devicesBox = el('detailDevices');
+    if (!data.devices || data.devices.length === 0) {
+      devicesBox.innerHTML = '<p>No devices linked yet.</p>';
+    } else {
+      devicesBox.innerHTML = data.devices.map(function (device) {
+        return '<div class="line"><strong>' + esc(device.label) + '</strong> (' + esc(device.role) + ')<br>' +
+          '<span class="meta">Staff name: ' + esc(device.staffName || 'Not given') + '<br>' +
+          'Last seen: ' + esc(formatSeen(device.lastSeenAt)) + '</span></div>';
+      }).join('');
+    }
+
+    var t = data.today || {};
+    var rows = [
+      ['Sales today', t.salesPesewas],
+      ['Cash', t.cashPesewas],
+      ['MoMo', t.momoPesewas],
+      ['Credit', t.creditPesewas],
+      ['Profit', t.profitPesewas]
+    ];
+    el('detailToday').innerHTML = rows.map(function (row) {
+      return '<div class="stat"><span>' + esc(row[0]) + '</span><span class="money">' + esc(formatMoney(row[1])) + '</span></div>';
+    }).join('') + '<p class="meta">Number of sales today: ' + esc(t.saleCount || 0) + '</p>';
+
+    el('detailPending').innerHTML = '<p>The credit book stays on the shop till in this version. Only sales come up to this server.</p>';
+
+    var salesBox = el('detailSales');
+    if (!data.recentSales || data.recentSales.length === 0) {
+      salesBox.innerHTML = '<p>No sales yet</p>';
+    } else {
+      salesBox.innerHTML = data.recentSales.map(function (sale) {
+        return '<div class="line"><strong>' + esc(sale.id || '') + '</strong> ' +
+          '<span class="money">' + esc(formatMoney(sale.totalPesewas)) + '</span><br>' +
+          '<span class="meta">' + esc(sale.attendant || '') + ', ' +
+          esc(sale.tender || '') + ', ' + esc(formatDate(sale.createdAt)) + '</span></div>';
+      }).join('');
+    }
+  }
+
+  function openShop(id) {
+    showError('detailError', '');
+    api('/admin/api/shops/' + encodeURIComponent(id)).then(function (data) {
+      renderDetail(data);
+      showView('detail');
+      window.scrollTo(0, 0);
+    }).catch(function (err) {
+      if (err.status === 401 || err.status === 503) {
+        backToSignin(err.message);
+      } else {
+        showError('shopsError', err.message);
+        showView('shops');
+      }
+    });
+  }
+
+  el('signinForm').addEventListener('submit', function (event) {
+    event.preventDefault();
+    showError('signinError', '');
+    adminKey = el('adminKeyInput').value.trim();
+    if (!adminKey) {
+      showError('signinError', 'Please type the admin key.');
+      return;
+    }
+    api('/admin/api/shops').then(function (data) {
+      try { sessionStorage.setItem(KEY_NAME, adminKey); } catch (e) {}
+      renderShops(data.shops);
+      showView('shops');
+    }).catch(function (err) {
+      adminKey = '';
+      showError('signinError', err.message);
+    });
+  });
+
+  el('createForm').addEventListener('submit', function (event) {
+    event.preventDefault();
+    showError('shopsError', '');
+    var name = el('shopNameInput').value.trim();
+    var town = el('shopTownInput').value.trim();
+    var ownerName = el('ownerNameInput').value.trim();
+    api('/admin/shops', {
+      method: 'POST',
+      body: JSON.stringify({ name: name, town: town, ownerName: ownerName })
+    }).then(function (created) {
+      el('createForm').reset();
+      showCreated(created, name);
+      return loadShops();
+    }).catch(function (err) {
+      if (err.status === 401 || err.status === 503) {
+        backToSignin(err.message);
+      } else {
+        showError('shopsError', err.message);
+      }
+    });
+  });
+
+  el('copyCodeBtn').addEventListener('click', function () {
+    copyText(el('createdCode').textContent, el('copyCodeBtn'));
+  });
+  el('copyTokenBtn').addEventListener('click', function () {
+    copyText(el('createdToken').textContent, el('copyTokenBtn'));
+  });
+  el('closeCreatedBtn').addEventListener('click', function () {
+    var ok = window.confirm('Close this panel? The owner token cannot be seen again after closing. Make sure you have saved it or sent it to the owner.');
+    if (ok) el('createdPanel').classList.add('hidden');
+  });
+
+  el('refreshBtn').addEventListener('click', function () { loadShops(); });
+  el('logoutBtn').addEventListener('click', function () { backToSignin(''); });
+  el('backBtn').addEventListener('click', function () {
+    showView('shops');
+    loadShops();
+  });
+  el('shopList').addEventListener('click', function (event) {
+    var button = event.target.closest('[data-view-shop]');
+    if (button) openShop(button.getAttribute('data-view-shop'));
+  });
+
+  if (adminKey) {
+    api('/admin/api/shops').then(function (data) {
+      renderShops(data.shops);
+      showView('shops');
+    }).catch(function () {
+      adminKey = '';
+      try { sessionStorage.removeItem(KEY_NAME); } catch (e) {}
+      showView('signin');
+    });
+  }
+</script>
+</body>
+</html>

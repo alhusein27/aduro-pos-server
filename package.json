@@ -1,0 +1,18 @@
+{
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  },
+  "description": "Sync server for Aduro POS. Shop tills push their sales here so the owner can see the shop from his own phone.",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/index.js",
+  "name": "aduro-pos-server",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "version": "1.0.0"
+}

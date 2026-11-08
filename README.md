@@ -46,5 +46,5 @@ sale time. Dates are Africa/Accra days. See src/totals.js.
 
 Dockerfile included. In Coolify: new app from this repo, set
 ADMIN_KEY and DATABASE_URL, give it the domain
-aduro.alhutech.com. First deploy is the first real PostgreSQL
+aduropos.alhutech.com. First deploy is the first real PostgreSQL
 run; the local tests run on the memory store.

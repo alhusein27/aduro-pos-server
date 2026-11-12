@@ -44,6 +44,10 @@ class MemoryStore {
     return device;
   }
 
+  async getDeviceById(id) {
+    return this.devices.get(id) || null;
+  }
+
   async findDeviceByTokenHash(tokenHash) {
     return this.devicesByTokenHash.get(tokenHash) || null;
   }
@@ -68,6 +72,24 @@ class MemoryStore {
   async markJoinCodeUsed(id) {
     const record = this.joinCodes.get(id);
     if (record) record.usedAt = new Date().toISOString();
+  }
+
+  // Claims a join code in one step: only an unused code is marked
+  // used, and the caller learns whether the claim won. Two phones
+  // sending the same code at the same moment cannot both win.
+  async claimJoinCode(id) {
+    const record = this.joinCodes.get(id);
+    if (!record || record.usedAt) return false;
+    record.usedAt = new Date().toISOString();
+    return true;
+  }
+
+  async deleteDevice(id) {
+    const device = this.devices.get(id);
+    if (!device) return false;
+    this.devices.delete(id);
+    this.devicesByTokenHash.delete(device.tokenHash);
+    return true;
   }
 
   // Stores one sync entry. Returns true when it is new, false when this
@@ -273,6 +295,12 @@ class PgStore {
     return device;
   }
 
+  async getDeviceById(id) {
+    const result = await this.pool.query('SELECT * FROM devices WHERE id = $1', [id]);
+    if (result.rows.length === 0) return null;
+    return rowToDevice(result.rows[0]);
+  }
+
   async findDeviceByTokenHash(tokenHash) {
     const result = await this.pool.query('SELECT * FROM devices WHERE token_hash = $1', [tokenHash]);
     if (result.rows.length === 0) return null;
@@ -312,6 +340,22 @@ class PgStore {
       new Date().toISOString(),
       id,
     ]);
+  }
+
+  // Claims a join code in one step: the UPDATE only touches an
+  // unused code, so two phones sending the same code at the same
+  // moment cannot both win. Returns true when the claim won.
+  async claimJoinCode(id) {
+    const result = await this.pool.query(
+      'UPDATE join_codes SET used_at = $1 WHERE id = $2 AND used_at IS NULL',
+      [new Date().toISOString(), id],
+    );
+    return result.rowCount === 1;
+  }
+
+  async deleteDevice(id) {
+    const result = await this.pool.query('DELETE FROM devices WHERE id = $1', [id]);
+    return result.rowCount === 1;
   }
 
   async addEntry(entry) {

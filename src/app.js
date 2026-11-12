@@ -13,15 +13,43 @@ const express = require('express');
 const { newToken, hashToken, newShopCode, newJoinCode, newId } = require('./tokens');
 const { computeTotals } = require('./totals');
 const { accraDateOf, accraToday } = require('./dates');
+const {
+  timingSafeCompare,
+  createAttemptGuard,
+  createRequestCap,
+  securityHeaders,
+} = require('./security');
 
 const JOIN_CODE_MINUTES = 30;
 const MAX_PUSH_ENTRIES = 200;
 const MAX_PULL_RECORDS = 500;
+// The largest sale or debtor balance the server accepts: GHc1,000,000
+// in pesewas. A chemical shop never sells that much in one sale.
+const MAX_TOTAL_PESEWAS = 100000000;
+const KIND_SHAPE = /^[a-z][a-z0-9_]{0,31}$/;
+
+// Five wrong tries, then locked out for fifteen minutes.
+const adminGuard = createAttemptGuard();
+const ownerGuard = createAttemptGuard();
+const staffGuard = createAttemptGuard();
+
+function lockedAnswer(res, lockedUntil) {
+  const waitSeconds = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 1000));
+  res.setHeader('Retry-After', String(waitSeconds));
+  return res.status(429).json({
+    error: 'Too many wrong tries. Please wait a little and try again.',
+  });
+}
 
 function createApp(store, options = {}) {
   const adminKey = options.adminKey !== undefined ? options.adminKey : process.env.ADMIN_KEY;
 
   const app = express();
+  // Behind Coolify the real caller address comes from the proxy.
+  app.set('trust proxy', 1);
+  app.disable('x-powered-by');
+  app.use(securityHeaders);
+  app.use(createRequestCap());
   app.use(express.json({ limit: '2mb' }));
 
   const health = (req, res) => {
@@ -31,15 +59,24 @@ function createApp(store, options = {}) {
   app.get('/health', health);
 
   // ---- Founder only pages. The admin key guards every one of them. ----
+  // Five wrong keys from one address lock that address out for
+  // fifteen minutes, and the key is compared in constant time so
+  // timing cannot leak how many characters matched.
   function requireAdmin(req, res, next) {
     if (!adminKey) {
       return res.status(503).json({
         error: 'This server has no admin key set yet, so shops cannot be created.',
       });
     }
-    if (req.headers['x-admin-key'] !== adminKey) {
+    const key = (req.ip || 'unknown') + ':admin';
+    const lockedUntil = adminGuard.lockedUntil(key);
+    if (lockedUntil) return lockedAnswer(res, lockedUntil);
+    const given = req.headers['x-admin-key'];
+    if (typeof given !== 'string' || !timingSafeCompare(given, adminKey)) {
+      adminGuard.fail(key);
       return res.status(401).json({ error: 'The admin key is not right.' });
     }
+    adminGuard.pass(key);
     return next();
   }
 
@@ -91,6 +128,12 @@ function createApp(store, options = {}) {
   // without the admin key, which the page sends with every call below.
   app.get('/admin', (req, res) => {
     res.type('html').sendFile(path.join(__dirname, '..', 'public', 'admin.html'));
+  });
+
+  // The portal script lives in its own file, so the content policy
+  // can refuse inline scripts. Same folder as the page itself.
+  app.get('/admin.js', (req, res) => {
+    res.type('js').sendFile(path.join(__dirname, '..', 'public', 'admin.js'));
   });
 
   app.get('/admin/api/shops', requireAdmin, async (req, res, next) => {
@@ -172,15 +215,19 @@ function createApp(store, options = {}) {
   app.post('/api/link/owner', async (req, res, next) => {
     try {
       const body = req.body || {};
-      const shop = typeof body.shopCode === 'string'
-        ? await store.getShopByCode(body.shopCode.trim())
-        : null;
+      const shopCode = typeof body.shopCode === 'string' ? body.shopCode.trim() : '';
+      const key = (req.ip || 'unknown') + ':owner:' + shopCode;
+      const lockedUntil = ownerGuard.lockedUntil(key);
+      if (lockedUntil) return lockedAnswer(res, lockedUntil);
+      const shop = shopCode ? await store.getShopByCode(shopCode) : null;
       if (!shop || typeof body.ownerToken !== 'string'
-        || hashToken(body.ownerToken) !== shop.ownerTokenHash) {
+        || !timingSafeCompare(hashToken(body.ownerToken), shop.ownerTokenHash)) {
+        ownerGuard.fail(key);
         return res.status(401).json({
           error: 'The shop code or the owner token is not right.',
         });
       }
+      ownerGuard.pass(key);
       const { deviceToken, device } = await makeDevice(shop, {
         label: typeof body.deviceLabel === 'string' && body.deviceLabel.trim()
           ? body.deviceLabel.trim()
@@ -199,15 +246,19 @@ function createApp(store, options = {}) {
   app.post('/api/link/staff', async (req, res, next) => {
     try {
       const body = req.body || {};
-      const shop = typeof body.shopCode === 'string'
-        ? await store.getShopByCode(body.shopCode.trim())
-        : null;
+      const shopCode = typeof body.shopCode === 'string' ? body.shopCode.trim() : '';
+      const key = (req.ip || 'unknown') + ':staff:' + shopCode;
+      const lockedUntil = staffGuard.lockedUntil(key);
+      if (lockedUntil) return lockedAnswer(res, lockedUntil);
+      const shop = shopCode ? await store.getShopByCode(shopCode) : null;
       if (!shop) {
+        staffGuard.fail(key);
         return res.status(400).json({ error: 'That shop code is not right.' });
       }
       const joinCode = typeof body.joinCode === 'string' ? body.joinCode.trim() : '';
       const record = joinCode ? await store.findJoinCode(shop.id, joinCode) : null;
       if (!record) {
+        staffGuard.fail(key);
         return res.status(400).json({ error: 'That join code is not right.' });
       }
       if (record.usedAt) {
@@ -218,7 +269,13 @@ function createApp(store, options = {}) {
           error: 'That join code has expired. Please ask the owner for a new one.',
         });
       }
-      await store.markJoinCodeUsed(record.id);
+      // The claim is one step in the store: two phones sending the
+      // same code at the same moment cannot both win.
+      const claimed = await store.claimJoinCode(record.id);
+      if (!claimed) {
+        return res.status(400).json({ error: 'That join code has already been used.' });
+      }
+      staffGuard.pass(key);
       const { deviceToken, device } = await makeDevice(shop, {
         label: typeof body.deviceLabel === 'string' && body.deviceLabel.trim()
           ? body.deviceLabel.trim()
@@ -260,6 +317,39 @@ function createApp(store, options = {}) {
     }
     return next();
   }
+
+  // ---- Taking a device off the shop. ----
+  // The owner removes one of his own shop's devices, for example a
+  // till that was stolen or a staff phone that left. The founder
+  // can remove any device from the portal. A removed device token
+  // stops working at once.
+  async function revokeDevice(req, res, shopId) {
+    const device = await store.getDeviceById(req.params.id);
+    if (!device || (shopId && device.shopId !== shopId)) {
+      return res.status(404).json({ error: 'That device could not be found.' });
+    }
+    if (req.device && device.id === req.device.id) {
+      return res.status(400).json({ error: 'A device cannot remove itself. Use another device or ask the founder.' });
+    }
+    await store.deleteDevice(device.id);
+    return res.status(200).json({ ok: true });
+  }
+
+  app.delete('/api/devices/:id', requireDevice, requireOwner, async (req, res, next) => {
+    try {
+      return await revokeDevice(req, res, req.device.shopId);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.delete('/admin/api/devices/:id', requireAdmin, async (req, res, next) => {
+    try {
+      return await revokeDevice(req, res, null);
+    } catch (err) {
+      return next(err);
+    }
+  });
 
   // ---- The owner makes a one time code so a staff phone can join. ----
   app.post('/api/devices/join-code', requireDevice, requireOwner, async (req, res, next) => {
@@ -329,8 +419,8 @@ function createApp(store, options = {}) {
           reject('This entry has no id.');
           continue;
         }
-        if (typeof entry.kind !== 'string' || entry.kind === '') {
-          reject('This entry has no kind.');
+        if (typeof entry.kind !== 'string' || !KIND_SHAPE.test(entry.kind)) {
+          reject('This entry has no kind, or the kind is not in the right shape.');
           continue;
         }
         if (!entry.payload || typeof entry.payload !== 'object' || Array.isArray(entry.payload)) {
@@ -341,20 +431,21 @@ function createApp(store, options = {}) {
         if (isSaleKind) {
           const payload = entry.payload;
           const hasId = typeof payload.id === 'string' && payload.id !== '';
-          const hasTotal = typeof payload.totalPesewas === 'number'
-            && Number.isFinite(payload.totalPesewas);
-          if (!hasId || !hasTotal) {
-            reject('This sale is missing its id or its total.');
+          const total = payload.totalPesewas;
+          const totalOk = Number.isSafeInteger(total) && total >= 0 && total <= MAX_TOTAL_PESEWAS;
+          if (!hasId || !totalOk) {
+            reject('This sale is missing its id, or its total is not a whole number of pesewas between 0 and GHc1,000,000.');
             continue;
           }
         }
         if (entry.kind === 'debtor') {
           const payload = entry.payload;
           const hasId = typeof payload.id === 'string' && payload.id !== '';
-          const hasBalance = typeof payload.balancePesewas === 'number'
-            && Number.isFinite(payload.balancePesewas);
-          if (!hasId || !hasBalance) {
-            reject('This debtor is missing its id or its balance.');
+          const balance = payload.balancePesewas;
+          const balanceOk = Number.isSafeInteger(balance)
+            && balance >= 0 && balance <= MAX_TOTAL_PESEWAS;
+          if (!hasId || !balanceOk) {
+            reject('This debtor is missing its id, or its balance is not a whole number of pesewas between 0 and GHc1,000,000.');
             continue;
           }
         }

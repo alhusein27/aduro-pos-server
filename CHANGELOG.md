@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.3.0 - 21 November 2026 - Server side trial, faster owner views
+
+- Free trial recorded on the server: POST /api/trial/register
+  takes a device ID and fixes the trial start date. Asking
+  again returns the same first date, so clearing the app on
+  the phone cannot restart the trial. The trial is 7 days from
+  the first day the server hears about the device. New trials
+  table, created on start if missing. The app in v1.4.3 uses
+  this and falls back to its local trial date when offline.
+- Owner views no longer load the whole sales history: today,
+  one day's sales and the portal page now filter by day in the
+  database (listSalesForDate) and take only the newest 20
+  sales (listRecentSales). Ghana has no daylight saving time
+  and Accra is UTC+0, so an Accra day is exactly a UTC day.
+- New indexes: devices by token hash (every authenticated
+  request looks a device up this way), entries by shop and
+  sequence, join codes by shop and code.
+- Health now reports the version and the store kind
+  (postgres or memory), so the live version and the storage
+  can be checked from outside without reading the deploy log.
+- Graceful shutdown: SIGTERM and SIGINT close the server and
+  the database pool, so a Coolify restart never cuts a query
+  short.
+- The request cap and the brute force guard now drop old
+  quiet records, so their maps cannot grow without bound.
+- The Docker image now runs as the plain node user, not root.
+- Migration check: scripts/migration-check.js builds the
+  v1.2.0 schema with sample rows on a scratch database, runs
+  the new init(), and proves the old rows survive, the trials
+  table and the three indexes appear, and init() passes twice.
+  Run it before any deploy that changes the schema.
+- Tests: 34 pass, 0 fail (was 25). New test/trial.test.js
+  (9 tests: trial register and idempotency, first seen date
+  honoured and future dates clamped, bad device IDs, health
+  version and store, day range, date filtered and recent
+  sales, guard pruning).
+
 ## 1.2.0 - 12 November 2026 - Security hardening
 
 - Brute force lockout: five wrong tries lock the caller out

@@ -25,9 +25,22 @@ it keeps data in memory, which is fine for local tests only.
   day: sales, cash, MoMo, credit, profit, count, by attendant)
   and GET /api/owner/sales?date=YYYY-MM-DD (that day's sales).
   Owner role only; a till token gets a plain 403.
-- Sync covers sales only in this version. Stock, the credit
-  book and cash counts stay on the till, the same rule as
-  TraderBooks Plus.
+- Sync covers sales, the credit book and the stock summary.
+  Since v1.1.0 the till also pushes debtor entries (each debtor
+  with the balance the till worked out) and one stock summary
+  entry (batches inside the 90 day expiry window, their value,
+  and the running low count). Stock batches and cash counts
+  stay on the till, the same rule as TraderBooks Plus.
+- The free trial is recorded here: POST /api/trial/register
+  with a device ID fixes the trial start date (7 days). Asking
+  again returns the same first date, so clearing the app on
+  the phone cannot restart the trial. No device token is
+  needed, because a new phone is not linked yet.
+- The health answer carries the version and the store kind:
+  GET /health returns ok, service, version and store
+  (postgres or memory). If store says memory on the live
+  server, DATABASE_URL is not set and every shop and sale is
+  lost on restart. Fix it in Coolify at once.
 
 ## Counting rules
 
@@ -48,3 +61,31 @@ Dockerfile included. In Coolify: new app from this repo, set
 ADMIN_KEY and DATABASE_URL, give it the domain
 aduropos.alhutech.com. First deploy is the first real PostgreSQL
 run; the local tests run on the memory store.
+
+After a deploy, check GET /health: version must match the
+release and store must say postgres. Redeploy one app at a
+time, never several together.
+
+## Backup and recovery
+
+The database holds every shop, device link, sale, debtor and
+trial. Losing it means every shop must link again and all
+synced history is gone, so it gets a daily backup.
+
+1. In Coolify, open the PostgreSQL database this server uses,
+   open Backups, and switch on a daily scheduled backup. Keep
+   7 days. This is the same shape as the TraderBooks Plus
+   server backup.
+2. Once a month, prove a backup restores: make a scratch
+   database, restore the newest backup file into it, and check
+   the shops table lists the shops. A backup never tested is
+   not a backup.
+3. Manual backup, from any machine with pg_dump and the
+   database password:
+   pg_dump -h HOST -U USER -d DATABASE -F c -f aduro-backup.dump
+4. Manual restore into an empty database:
+   pg_restore -h HOST -U USER -d DATABASE aduro-backup.dump
+   Then restart the server app in Coolify.
+5. Backup files hold shop and sale records. Never put one in
+   git, in a public folder, or on a shared link. Keep them in
+   the Coolify backup store or on the founder PC only.

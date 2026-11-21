@@ -8,6 +8,18 @@
 // PgStore keeps everything in PostgreSQL, so it survives restarts.
 // That is the store the live server uses.
 
+const { accraDateOf, accraDayRange } = require('./dates');
+
+// The free trial is seven days from the first day the server hears
+// about a device. The trial start is set once and never moves, so
+// clearing the app on the phone cannot restart the trial.
+const TRIAL_DAYS = 7;
+
+function trialEndOf(trialStartIso) {
+  const start = new Date(trialStartIso).getTime();
+  return new Date(start + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
 class MemoryStore {
   constructor() {
     this.shops = new Map();
@@ -20,9 +32,31 @@ class MemoryStore {
     this.summaryByShop = new Map();
     this.entries = [];
     this.seqCounter = 0;
+    this.trials = new Map();
   }
 
   async init() {}
+
+  async close() {}
+
+  // Records the trial for a device the first time the server hears
+  // about it. A device that already has a trial keeps its first
+  // start date; calling again changes nothing.
+  async registerTrial(deviceId, nowIso) {
+    const existing = this.trials.get(deviceId);
+    if (existing) return existing;
+    const record = {
+      deviceId,
+      trialStart: nowIso,
+      trialEnd: trialEndOf(nowIso),
+    };
+    this.trials.set(deviceId, record);
+    return record;
+  }
+
+  async getTrial(deviceId) {
+    return this.trials.get(deviceId) || null;
+  }
 
   async createShop(shop) {
     this.shops.set(shop.id, shop);
@@ -114,6 +148,24 @@ class MemoryStore {
   async listSales(shopId) {
     const byId = this.salesByShop.get(shopId);
     return byId ? [...byId.values()] : [];
+  }
+
+  // The sales of one Accra day only, oldest first. The owner views
+  // use this instead of loading the whole history.
+  async listSalesForDate(shopId, date) {
+    const all = await this.listSales(shopId);
+    return all
+      .filter((sale) => sale && accraDateOf(sale.createdAt) === date)
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  }
+
+  // The newest sales first, at most limit. The founder portal uses
+  // this instead of sorting the whole history.
+  async listRecentSales(shopId, limit) {
+    const all = await this.listSales(shopId);
+    return [...all]
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, limit);
   }
 
   // Keeps the newest copy of a debtor, with the balance the till
@@ -259,7 +311,54 @@ class PgStore {
         created_at text NOT NULL,
         UNIQUE (shop_id, entry_id)
       );
+      CREATE TABLE IF NOT EXISTS trials (
+        device_id text PRIMARY KEY,
+        trial_start text NOT NULL,
+        trial_end text NOT NULL,
+        created_at text NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS devices_token_hash_idx ON devices (token_hash);
+      CREATE INDEX IF NOT EXISTS entries_shop_seq_idx ON entries (shop_id, seq);
+      CREATE INDEX IF NOT EXISTS join_codes_shop_code_idx ON join_codes (shop_id, code);
     `);
+  }
+
+  async close() {
+    await this.pool.end();
+  }
+
+  // Records the trial for a device the first time the server hears
+  // about it. A device that already has a trial keeps its first
+  // start date; calling again changes nothing.
+  async registerTrial(deviceId, nowIso) {
+    const record = {
+      deviceId,
+      trialStart: nowIso,
+      trialEnd: trialEndOf(nowIso),
+    };
+    const result = await this.pool.query(
+      `INSERT INTO trials (device_id, trial_start, trial_end, created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (device_id) DO NOTHING
+       RETURNING device_id`,
+      [deviceId, record.trialStart, record.trialEnd, nowIso],
+    );
+    if (result.rows.length > 0) return record;
+    return this.getTrial(deviceId);
+  }
+
+  async getTrial(deviceId) {
+    const result = await this.pool.query(
+      'SELECT device_id, trial_start, trial_end FROM trials WHERE device_id = $1',
+      [deviceId],
+    );
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      deviceId: row.device_id,
+      trialStart: row.trial_start,
+      trialEnd: row.trial_end,
+    };
   }
 
   async createShop(shop) {
@@ -386,6 +485,32 @@ class PgStore {
 
   async listSales(shopId) {
     const result = await this.pool.query('SELECT payload FROM sales WHERE shop_id = $1', [shopId]);
+    return result.rows.map((row) => row.payload);
+  }
+
+  // The sales of one Accra day only, oldest first. The day is
+  // filtered in the database, so the owner views never load the
+  // whole history. Sale times are ISO text, so the text range
+  // compares correctly.
+  async listSalesForDate(shopId, date) {
+    const range = accraDayRange(date);
+    if (!range) return [];
+    const result = await this.pool.query(
+      `SELECT payload FROM sales WHERE shop_id = $1
+       AND payload ->> 'createdAt' >= $2 AND payload ->> 'createdAt' < $3
+       ORDER BY payload ->> 'createdAt' ASC`,
+      [shopId, range.start, range.end],
+    );
+    return result.rows.map((row) => row.payload);
+  }
+
+  // The newest sales first, at most limit.
+  async listRecentSales(shopId, limit) {
+    const result = await this.pool.query(
+      `SELECT payload FROM sales WHERE shop_id = $1
+       ORDER BY payload ->> 'createdAt' DESC LIMIT $2`,
+      [shopId, limit],
+    );
     return result.rows.map((row) => row.payload);
   }
 

@@ -16,13 +16,17 @@ function timingSafeCompare(a, b) {
 // A small in memory brute force guard. Each key (one IP plus one
 // target, like a shop code) gets a few failed tries, then it is
 // locked for a while. Success clears the count. Old records are
-// dropped when they are next touched, so the map stays small.
-function createAttemptGuard({ maxFailures = 5, lockoutMs = 15 * 60 * 1000 } = {}) {
+// dropped when they are next touched, so the map stays small: a
+// lockout is dropped when it ends, and a record with no lockout is
+// dropped after an hour with no new failure.
+function createAttemptGuard({ maxFailures = 5, lockoutMs = 15 * 60 * 1000, idleMs = 60 * 60 * 1000 } = {}) {
   const records = new Map();
 
   function prune(now) {
     for (const [key, record] of records) {
       if (record.lockedUntil && record.lockedUntil <= now) {
+        records.delete(key);
+      } else if (!record.lockedUntil && record.updatedAt && now - record.updatedAt > idleMs) {
         records.delete(key);
       }
     }
@@ -44,6 +48,7 @@ function createAttemptGuard({ maxFailures = 5, lockoutMs = 15 * 60 * 1000 } = {}
       prune(now);
       const record = records.get(key) || { failures: 0, lockedUntil: null };
       record.failures += 1;
+      record.updatedAt = now;
       if (record.failures >= maxFailures) {
         record.lockedUntil = now + lockoutMs;
       }
@@ -57,12 +62,18 @@ function createAttemptGuard({ maxFailures = 5, lockoutMs = 15 * 60 * 1000 } = {}
 }
 
 // A simple per IP request cap, so one address cannot flood the API.
-// Counts every request in a rolling window.
+// Counts every request in a rolling window. Expired entries are
+// swept when the map grows large, so it cannot grow without bound.
 function createRequestCap({ windowMs = 15 * 60 * 1000, maxRequests = 1200 } = {}) {
   const hits = new Map();
   return (req, res, next) => {
     const now = Date.now();
     const key = req.ip || 'unknown';
+    if (hits.size > 5000) {
+      for (const [ip, record] of hits) {
+        if (record.resetAt <= now) hits.delete(ip);
+      }
+    }
     const record = hits.get(key) || { count: 0, resetAt: now + windowMs };
     if (record.resetAt <= now) {
       record.count = 0;

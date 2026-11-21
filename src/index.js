@@ -12,22 +12,47 @@ const { MemoryStore, PgStore } = require('./store');
 
 async function main() {
   let store;
+  let storeKind;
   if (process.env.DATABASE_URL) {
     store = new PgStore(process.env.DATABASE_URL);
+    storeKind = 'postgres';
     console.log('Using PostgreSQL storage.');
   } else {
     store = new MemoryStore();
+    storeKind = 'memory';
     console.warn(
       'WARNING: DATABASE_URL is not set, so this server is keeping data in memory only. '
       + 'Everything is lost when the server restarts. Use this only for trying the server out.',
     );
   }
   await store.init();
-  const app = createApp(store, { adminKey: process.env.ADMIN_KEY });
+  const version = require('../package.json').version;
+  const app = createApp(store, {
+    adminKey: process.env.ADMIN_KEY,
+    version,
+    storeKind,
+  });
   const port = Number(process.env.PORT) || 3000;
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`Aduro POS server is listening on port ${port}.`);
   });
+  // Coolify stops the container with SIGTERM. Close the door first,
+  // then the database pool, so a restart never cuts a query short.
+  let stopping = false;
+  const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
+    server.close(async () => {
+      try {
+        await store.close();
+      } catch (err) {
+        console.error('Error closing the store.', err);
+      }
+      process.exit(0);
+    });
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 main().catch((err) => {

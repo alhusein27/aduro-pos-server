@@ -43,6 +43,8 @@ function lockedAnswer(res, lockedUntil) {
 
 function createApp(store, options = {}) {
   const adminKey = options.adminKey !== undefined ? options.adminKey : process.env.ADMIN_KEY;
+  const version = options.version || 'unknown';
+  const storeKind = options.storeKind || 'unknown';
 
   const app = express();
   // Behind Coolify the real caller address comes from the proxy.
@@ -53,10 +55,55 @@ function createApp(store, options = {}) {
   app.use(express.json({ limit: '2mb' }));
 
   const health = (req, res) => {
-    res.status(200).json({ ok: true, service: 'aduro-pos-server' });
+    res.status(200).json({ ok: true, service: 'aduro-pos-server', version, store: storeKind });
   };
   app.get('/', health);
   app.get('/health', health);
+
+  // ---- Free trial, recorded on the server. ----
+  // A phone asks once with its device ID and the server fixes the
+  // trial start date. Asking again returns the same first date, so
+  // clearing the app on the phone cannot restart the trial. This
+  // route needs no device token, because a new phone is not linked
+  // yet; the global request cap is the flood guard.
+  const DEVICE_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+  app.post('/api/trial/register', async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const deviceId = typeof body.deviceId === 'string' ? body.deviceId.trim() : '';
+      if (!DEVICE_ID_SHAPE.test(deviceId)) {
+        return res.status(400).json({ error: 'Please send a device ID.' });
+      }
+      // The phone may have opened days before it first reached the
+      // server. It may send the day it first opened, and the trial
+      // starts then, never later than now: a phone cannot stretch
+      // its trial by staying offline, and a future date is clamped.
+      const now = new Date();
+      let startAt = now;
+      if (typeof body.firstSeenAt === 'string') {
+        const claimed = new Date(body.firstSeenAt);
+        if (!Number.isNaN(claimed.getTime()) && claimed.getTime() < now.getTime()) {
+          startAt = claimed;
+        }
+      }
+      const record = await store.registerTrial(deviceId, startAt.toISOString());
+      // Whole days left, rounded up, so a trial with any time left
+      // shows at least 1. The app still works its own days out from
+      // the trial start; this number is only for display.
+      const daysLeft = Math.max(
+        0,
+        Math.ceil((new Date(record.trialEnd).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
+      );
+      return res.status(200).json({
+        deviceId: record.deviceId,
+        trialStart: record.trialStart,
+        trialEnd: record.trialEnd,
+        daysLeft,
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
 
   // ---- Founder only pages. The admin key guards every one of them. ----
   // Five wrong keys from one address lock that address out for
@@ -169,12 +216,9 @@ function createApp(store, options = {}) {
         ...stats,
       };
       const devices = await store.listDevices(fullShop.id);
-      const allSales = await store.listSales(fullShop.id);
       const today = accraToday();
-      const todaysSales = allSales.filter((sale) => accraDateOf(sale.createdAt) === today);
-      const recentSales = [...allSales]
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-        .slice(0, 20);
+      const todaysSales = await store.listSalesForDate(fullShop.id, today);
+      const recentSales = await store.listRecentSales(fullShop.id, 20);
       return res.status(200).json({
         shop,
         devices,
@@ -517,9 +561,8 @@ function createApp(store, options = {}) {
   // ---- Owner views, worked out from the stored sales. ----
   app.get('/api/owner/today', requireDevice, requireOwner, async (req, res, next) => {
     try {
-      const allSales = await store.listSales(req.device.shopId);
       const today = accraToday();
-      const todaysSales = allSales.filter((sale) => accraDateOf(sale.createdAt) === today);
+      const todaysSales = await store.listSalesForDate(req.device.shopId, today);
       const stockSummary = await store.getSummary(req.device.shopId);
       return res.status(200).json({
         date: today,
@@ -539,10 +582,7 @@ function createApp(store, options = {}) {
           error: 'Please give the date like this: 2026-10-29.',
         });
       }
-      const allSales = await store.listSales(req.device.shopId);
-      const sales = allSales
-        .filter((sale) => accraDateOf(sale.createdAt) === date)
-        .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      const sales = await store.listSalesForDate(req.device.shopId, date);
       return res.status(200).json({ date, sales });
     } catch (err) {
       return next(err);

@@ -23,4 +23,17 @@ function accraToday() {
   return accraDateOf(new Date().toISOString());
 }
 
-module.exports = { accraDateOf, accraToday };
+// The UTC range of one Accra calendar day, as ISO strings, so the
+// database can filter sales by day instead of loading them all.
+// Ghana keeps no daylight saving time and Accra is UTC+0, so an
+// Accra day is exactly a UTC day. Returns null for a bad date.
+function accraDayRange(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return null;
+  const start = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime())) return null;
+  if (accraDateOf(start.toISOString()) !== date) return null;
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+module.exports = { accraDateOf, accraToday, accraDayRange };

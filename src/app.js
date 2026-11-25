@@ -471,7 +471,7 @@ function createApp(store, options = {}) {
           reject('This entry is missing its details.');
           continue;
         }
-        const isSaleKind = entry.kind === 'sale';
+        const isSaleKind = entry.kind === 'sale' || entry.kind === 'sale_return';
         if (isSaleKind) {
           const payload = entry.payload;
           const hasId = typeof payload.id === 'string' && payload.id !== '';
@@ -479,6 +479,10 @@ function createApp(store, options = {}) {
           const totalOk = Number.isSafeInteger(total) && total >= 0 && total <= MAX_TOTAL_PESEWAS;
           if (!hasId || !totalOk) {
             reject('This sale is missing its id, or its total is not a whole number of pesewas between 0 and GHc1,000,000.');
+            continue;
+          }
+          if (entry.kind === 'sale_return' && payload.returned !== true) {
+            reject('This sale return does not carry the returned mark.');
             continue;
           }
         }

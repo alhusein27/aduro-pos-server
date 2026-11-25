@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.0 - 25 November 2026 - Sale returns
+
+- Owner totals now leave out a sale whose payload carries
+  returned: true. The app in 1.4.6 can return a wrong sale;
+  the sale stays in the record, marked returned, and no total
+  counts it. Payloads with no returned field count as
+  standing, so old sales are untouched.
+- New sync kind sale_return: the till sends the full sale
+  with the returned mark under its own entry id, and the
+  server replaces its copy of that sale (upsertSale), so the
+  owner views agree with the till. A sale_return without the
+  returned mark is rejected. The entry is stored once, like
+  every other kind.
+- No table changes. Pairs with app 1.4.6.
+
 ## 1.3.0 - 21 November 2026 - Server side trial, faster owner views
 
 - Free trial recorded on the server: POST /api/trial/register

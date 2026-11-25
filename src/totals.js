@@ -2,8 +2,10 @@
 // app uses, so the numbers on the server match the numbers on the
 // shop phone.
 //
-// Every recorded sale counts. Aduro POS has no approval step: a
-// sale is final when it is recorded on the till.
+// Every recorded sale counts, except a returned one. Since app
+// 1.4.6 a wrong sale can be returned by the owner: the sale
+// stays in the record with returned set, and no total counts
+// it. A sale payload with no returned field counts as standing.
 // Sales total is the sum of totalPesewas over the sales.
 // Cash, MoMo and credit totals are the sums per tender.
 // Profit is the sum of profitPesewas the till worked out at the
@@ -35,6 +37,7 @@ function computeTotals(sales) {
   };
   for (const sale of sales || []) {
     if (!sale || typeof sale !== 'object') continue;
+    if (sale.returned === true) continue;
     const total = amountOf(sale);
     totals.salesPesewas += total;
     totals.profitPesewas += profitOf(sale);

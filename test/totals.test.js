@@ -36,6 +36,25 @@ test('tenders split and profit sums from the sales', () => {
   assert.equal(t.saleCount, 3);
 });
 
+test('a returned sale counts in no total', () => {
+  const t = computeTotals([
+    sale({ totalPesewas: 1000, profitPesewas: 300, tender: 'cash' }),
+    sale({
+      id: 's2',
+      totalPesewas: 2000,
+      profitPesewas: 500,
+      tender: 'cash',
+      returned: true,
+      returnedAt: '2026-11-08T09:00:00.000Z',
+    }),
+  ]);
+  assert.equal(t.salesPesewas, 1000);
+  assert.equal(t.cashPesewas, 1000);
+  assert.equal(t.profitPesewas, 300);
+  assert.equal(t.saleCount, 1);
+  assert.equal(t.byAttendant['Efua (Attendant A)'], 1000);
+});
+
 test('byAttendant splits the sales total', () => {
   const t = computeTotals([
     sale({ totalPesewas: 1000 }),

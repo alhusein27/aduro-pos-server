@@ -151,6 +151,57 @@ test('full flow: create, link owner, join code, link till, push sale, owner sees
   assert.equal(day.json.sales[0].lines[0].medicineName, 'Paracetamol 500mg');
 });
 
+test('a sale return takes the sale out of the owner totals', async (t) => {
+  const { server, base } = await startServer();
+  t.after(() => server.close());
+  const { ownerToken, created } = await shopWithOwner(base);
+  const join = await call(base, 'POST', '/api/devices/join-code', {
+    token: ownerToken,
+    body: { staffName: 'Shop till', deviceLabel: 'Shop till' },
+  });
+  const till = await call(base, 'POST', '/api/link/staff', {
+    body: { shopCode: created.shopCode, joinCode: join.json.joinCode, deviceLabel: 'Shop till' },
+  });
+  const tillToken = till.json.deviceToken;
+
+  const sale = makeSale({});
+  const push = await call(base, 'POST', '/api/sync/push', {
+    token: tillToken,
+    body: { entries: [makeEntry(sale)] },
+  });
+  assert.deepEqual(push.json.accepted, ['queue-s1001']);
+
+  // A return entry without the returned mark is rejected.
+  const unmarked = {
+    id: 'queue-return-s1001',
+    kind: 'sale_return',
+    device: 'Shop till',
+    payload: sale,
+    createdAt: sale.createdAt,
+  };
+  const badReturn = await call(base, 'POST', '/api/sync/push', {
+    token: tillToken,
+    body: { entries: [unmarked] },
+  });
+  assert.equal(badReturn.json.rejected.length, 1);
+
+  const returnedSale = { ...sale, returned: true, returnedAt: at('09:15:00') };
+  const ret = await call(base, 'POST', '/api/sync/push', {
+    token: tillToken,
+    body: { entries: [{ ...unmarked, payload: returnedSale }] },
+  });
+  assert.deepEqual(ret.json.accepted, ['queue-return-s1001']);
+
+  const today = await call(base, 'GET', '/api/owner/today', { token: ownerToken });
+  assert.equal(today.json.salesPesewas, 0);
+  assert.equal(today.json.saleCount, 0);
+
+  // The sale itself stays in the day list, carrying its mark.
+  const day = await call(base, 'GET', `/api/owner/sales?date=${TODAY}`, { token: ownerToken });
+  assert.equal(day.json.sales.length, 1);
+  assert.equal(day.json.sales[0].returned, true);
+});
+
 test('the till cannot open owner pages', async (t) => {
   const { server, base } = await startServer();
   t.after(() => server.close());

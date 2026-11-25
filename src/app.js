@@ -504,6 +504,31 @@ function createApp(store, options = {}) {
             continue;
           }
         }
+        if (entry.kind === 'medicine' || entry.kind === 'batch') {
+          const payload = entry.payload;
+          if (typeof payload.id !== 'string' || payload.id === '') {
+            reject('This stock entry is missing its id.');
+            continue;
+          }
+        }
+        if (entry.kind === 'books') {
+          const payload = entry.payload;
+          const listsOk = ['expenses', 'suppliers', 'supplierLines', 'staff']
+            .every((key) => Array.isArray(payload[key]));
+          if (!listsOk) {
+            reject('This books entry is missing one of its lists.');
+            continue;
+          }
+          // Staff PIN material never rides the sync pipe. A
+          // books entry carrying a hash is refused whole.
+          const staffDirty = payload.staff.some(
+            (m) => m && (typeof m.pinHash === 'string' || typeof m.pinSalt === 'string'),
+          );
+          if (staffDirty) {
+            reject('This books entry carries staff PIN material, which never syncs.');
+            continue;
+          }
+        }
         const record = {
           shopId: req.device.shopId,
           entryId: entry.id,
@@ -529,6 +554,15 @@ function createApp(store, options = {}) {
         }
         if (entry.kind === 'debtor') {
           await store.upsertDebtor(req.device.shopId, entry.payload.id, entry.payload);
+        }
+        if (entry.kind === 'medicine') {
+          await store.upsertMedicine(req.device.shopId, entry.payload.id, entry.payload);
+        }
+        if (entry.kind === 'batch') {
+          await store.upsertBatch(req.device.shopId, entry.payload.id, entry.payload);
+        }
+        if (entry.kind === 'books') {
+          await store.saveBooks(req.device.shopId, entry.payload);
         }
         if (entry.kind === 'stock_summary') {
           await store.saveSummary(req.device.shopId, entry.payload);
@@ -602,6 +636,31 @@ function createApp(store, options = {}) {
         .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
       const totalOwedPesewas = debtors.reduce((sum, d) => sum + d.balancePesewas, 0);
       return res.status(200).json({ debtors, totalOwedPesewas });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // ---- The stock picture, as the till last sent it up. ----
+  app.get('/api/owner/stock', requireDevice, requireOwner, async (req, res, next) => {
+    try {
+      const medicines = (await store.listMedicines(req.device.shopId))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      const batches = (await store.listBatches(req.device.shopId))
+        .sort((a, b) => String(a.expiryDate || '').localeCompare(String(b.expiryDate || '')));
+      return res.status(200).json({ medicines, batches });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // ---- The books, as the till last sent them up. ----
+  app.get('/api/owner/books', requireDevice, requireOwner, async (req, res, next) => {
+    try {
+      const books = await store.getBooks(req.device.shopId);
+      return res.status(200).json(
+        books || { expenses: [], suppliers: [], supplierLines: [], staff: [] },
+      );
     } catch (err) {
       return next(err);
     }

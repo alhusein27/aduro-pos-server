@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.0 - 25 November 2026 - The widened sync pipe
+
+- Three new sync kinds ride the same push:
+  - medicine: one entry per medicine, the newest copy kept
+    in a new medicines table, with the units in stock the
+    till worked out from its batches.
+  - batch: one entry per batch, kept in a new batches table.
+  - books: one snapshot entry carrying the shop expenses,
+    suppliers with their lines, and staff names, kept whole
+    in a new shop_books table. A snapshot replaces the last,
+    so a line removed on the till is removed here too.
+- Staff PIN material never syncs: a books entry whose staff
+  list carries a pinHash or pinSalt is refused whole.
+- Two new owner reads: GET /api/owner/stock (medicines by
+  name, batches by expiry) and GET /api/owner/books (the
+  newest books snapshot, or empty lists when none has come).
+- The app in 1.4.10 sends these with every sync and shows
+  them in the owner viewer: a Shop stock screen, plus Spent
+  today and Owed to suppliers banners.
+
 ## 1.4.0 - 25 November 2026 - Sale returns
 
 - Owner totals now leave out a sale whose payload carries

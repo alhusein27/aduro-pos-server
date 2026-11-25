@@ -29,6 +29,9 @@ class MemoryStore {
     this.joinCodes = new Map();
     this.salesByShop = new Map();
     this.debtorsByShop = new Map();
+    this.medicinesByShop = new Map();
+    this.batchesByShop = new Map();
+    this.booksByShop = new Map();
     this.summaryByShop = new Map();
     this.entries = [];
     this.seqCounter = 0;
@@ -180,6 +183,40 @@ class MemoryStore {
     return byId ? [...byId.values()] : [];
   }
 
+  // Keeps the newest copy of a medicine, with the units in
+  // stock the till worked out from its batches.
+  async upsertMedicine(shopId, medicineId, payload) {
+    if (!this.medicinesByShop.has(shopId)) this.medicinesByShop.set(shopId, new Map());
+    this.medicinesByShop.get(shopId).set(medicineId, payload);
+  }
+
+  async listMedicines(shopId) {
+    const byId = this.medicinesByShop.get(shopId);
+    return byId ? [...byId.values()] : [];
+  }
+
+  // Keeps the newest copy of a batch.
+  async upsertBatch(shopId, batchId, payload) {
+    if (!this.batchesByShop.has(shopId)) this.batchesByShop.set(shopId, new Map());
+    this.batchesByShop.get(shopId).set(batchId, payload);
+  }
+
+  async listBatches(shopId) {
+    const byId = this.batchesByShop.get(shopId);
+    return byId ? [...byId.values()] : [];
+  }
+
+  // Keeps the newest books snapshot whole: expenses, suppliers
+  // with their lines, and staff names. One snapshot replaces
+  // the last, so a line removed on the till is removed here.
+  async saveBooks(shopId, payload) {
+    this.booksByShop.set(shopId, payload);
+  }
+
+  async getBooks(shopId) {
+    return this.booksByShop.get(shopId) || null;
+  }
+
   // Keeps the newest stock picture for the shop.
   async saveSummary(shopId, payload) {
     this.summaryByShop.set(shopId, payload);
@@ -293,6 +330,25 @@ class PgStore {
         payload jsonb NOT NULL,
         updated_at text NOT NULL,
         PRIMARY KEY (shop_id, debtor_id)
+      );
+      CREATE TABLE IF NOT EXISTS medicines (
+        shop_id text NOT NULL REFERENCES shops(id),
+        medicine_id text NOT NULL,
+        payload jsonb NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (shop_id, medicine_id)
+      );
+      CREATE TABLE IF NOT EXISTS batches (
+        shop_id text NOT NULL REFERENCES shops(id),
+        batch_id text NOT NULL,
+        payload jsonb NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (shop_id, batch_id)
+      );
+      CREATE TABLE IF NOT EXISTS shop_books (
+        shop_id text PRIMARY KEY REFERENCES shops(id),
+        payload jsonb NOT NULL,
+        updated_at text NOT NULL
       );
       CREATE TABLE IF NOT EXISTS shop_summaries (
         shop_id text PRIMARY KEY REFERENCES shops(id),
@@ -527,6 +583,51 @@ class PgStore {
   async listDebtors(shopId) {
     const result = await this.pool.query('SELECT payload FROM debtors WHERE shop_id = $1', [shopId]);
     return result.rows.map((row) => row.payload);
+  }
+
+  async upsertMedicine(shopId, medicineId, payload) {
+    await this.pool.query(
+      `INSERT INTO medicines (shop_id, medicine_id, payload, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (shop_id, medicine_id) DO UPDATE
+       SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [shopId, medicineId, JSON.stringify(payload), new Date().toISOString()],
+    );
+  }
+
+  async listMedicines(shopId) {
+    const result = await this.pool.query('SELECT payload FROM medicines WHERE shop_id = $1', [shopId]);
+    return result.rows.map((row) => row.payload);
+  }
+
+  async upsertBatch(shopId, batchId, payload) {
+    await this.pool.query(
+      `INSERT INTO batches (shop_id, batch_id, payload, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (shop_id, batch_id) DO UPDATE
+       SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [shopId, batchId, JSON.stringify(payload), new Date().toISOString()],
+    );
+  }
+
+  async listBatches(shopId) {
+    const result = await this.pool.query('SELECT payload FROM batches WHERE shop_id = $1', [shopId]);
+    return result.rows.map((row) => row.payload);
+  }
+
+  async saveBooks(shopId, payload) {
+    await this.pool.query(
+      `INSERT INTO shop_books (shop_id, payload, updated_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (shop_id) DO UPDATE
+       SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [shopId, JSON.stringify(payload), new Date().toISOString()],
+    );
+  }
+
+  async getBooks(shopId) {
+    const result = await this.pool.query('SELECT payload FROM shop_books WHERE shop_id = $1', [shopId]);
+    return result.rows.length ? result.rows[0].payload : null;
   }
 
   async saveSummary(shopId, payload) {

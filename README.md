@@ -66,6 +66,22 @@ After a deploy, check GET /health: version must match the
 release and store must say postgres. Redeploy one app at a
 time, never several together.
 
+## Google Play purchases
+
+The Play build of the app (built with --dart-define=STORE=play)
+sells the licence through Google Play Billing and reports each
+purchase to POST /api/play/report. The server checks the
+purchase token with Google before believing it, so it needs
+the service account JSON key made in Play Console (Settings,
+API access). Set it in Coolify as
+GOOGLE_PLAY_SERVICE_ACCOUNT_JSON (the whole JSON), or put the
+file on the server and set GOOGLE_PLAY_SERVICE_ACCOUNT_FILE to
+its path. PLAY_PACKAGE_NAME can override the app package and
+defaults to com.alhutech.aduropos. With no service account set
+the server still runs and Play reports are refused plainly.
+The products are aduro_monthly (GHc50) and aduro_yearly
+(GHc500), made as subscriptions in Play Console.
+
 ## Backup and recovery
 
 The database holds every shop, device link, sale, debtor and

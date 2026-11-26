@@ -9,6 +9,7 @@
 
 const { createApp } = require('./app');
 const { MemoryStore, PgStore } = require('./store');
+const { createPlayVerifier, playCredentialsFromEnv } = require('./play_verify');
 
 async function main() {
   let store;
@@ -26,11 +27,25 @@ async function main() {
     );
   }
   await store.init();
+  // Play purchase checking needs the Google service account made
+  // in Play Console (Settings, API access). Without it the server
+  // still runs; Play reports are refused plainly until it is set.
+  const playVerifier = createPlayVerifier({
+    credentials: playCredentialsFromEnv(),
+    packageName: process.env.PLAY_PACKAGE_NAME || 'com.alhutech.aduropos',
+  });
+  if (!playVerifier) {
+    console.warn(
+      'WARNING: no Google Play service account is set '
+      + '(GOOGLE_PLAY_SERVICE_ACCOUNT_JSON), so Play purchases cannot be checked yet.',
+    );
+  }
   const version = require('../package.json').version;
   const app = createApp(store, {
     adminKey: process.env.ADMIN_KEY,
     version,
     storeKind,
+    playVerifier,
   });
   const port = Number(process.env.PORT) || 3000;
   const server = app.listen(port, () => {

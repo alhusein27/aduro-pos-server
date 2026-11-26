@@ -12,7 +12,7 @@ const path = require('path');
 const express = require('express');
 const { newToken, hashToken, newShopCode, newJoinCode, newId } = require('./tokens');
 const { computeTotals } = require('./totals');
-const { accraDateOf, accraToday } = require('./dates');
+const { accraDateOf, accraToday, addMonths } = require('./dates');
 const {
   timingSafeCompare,
   createAttemptGuard,
@@ -45,6 +45,10 @@ function createApp(store, options = {}) {
   const adminKey = options.adminKey !== undefined ? options.adminKey : process.env.ADMIN_KEY;
   const version = options.version || 'unknown';
   const storeKind = options.storeKind || 'unknown';
+  // Checks Play purchase tokens with Google. Null when the server
+  // has no Google service account yet; Play reports are then
+  // refused plainly instead of being trusted unchecked.
+  const playVerifier = options.playVerifier || null;
 
   const app = express();
   // Behind Coolify the real caller address comes from the proxy.
@@ -100,6 +104,109 @@ function createApp(store, options = {}) {
         trialEnd: record.trialEnd,
         daysLeft,
       });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // ---- Google Play purchases (the Play build of the app). ----
+  // The Play build sells the licence through Google Play Billing.
+  // The app reports each purchase here with its device ID; the
+  // server asks Google whether the purchase token is real before
+  // it believes it, records the token so it is never counted
+  // twice, and works out the paid until date. The shop build
+  // never touches these routes; it pays through the pay hub.
+  const PLAY_PRODUCTS = new Map([
+    ['aduro_monthly', 1],
+    ['aduro_yearly', 12],
+  ]);
+  // Days after the paid until date when the plan still counts as
+  // grace, the same shape the pay hub answers with.
+  const PLAY_GRACE_DAYS = 7;
+
+  app.post('/api/play/report', async (req, res, next) => {
+    try {
+      const body = req.body || {};
+      const deviceId = typeof body.deviceId === 'string' ? body.deviceId.trim() : '';
+      if (!DEVICE_ID_SHAPE.test(deviceId)) {
+        return res.status(400).json({ error: 'Please send a device ID.' });
+      }
+      const productId = typeof body.productId === 'string' ? body.productId.trim() : '';
+      if (!PLAY_PRODUCTS.has(productId)) {
+        return res.status(400).json({ error: 'Please send a valid Play product.' });
+      }
+      const purchaseToken = typeof body.purchaseToken === 'string' ? body.purchaseToken.trim() : '';
+      if (!purchaseToken || purchaseToken.length > 2000) {
+        return res.status(400).json({ error: 'Please send a valid purchase token.' });
+      }
+      const phone = typeof body.phone === 'string' ? body.phone.trim().slice(0, 32) : '';
+      const seen = await store.findPlayPurchaseByToken(purchaseToken);
+      if (seen) {
+        // Already recorded: answer the stored date, extend nothing.
+        if (seen.deviceId !== deviceId) {
+          return res.status(400).json({ error: 'That purchase belongs to another phone.' });
+        }
+        return res.status(200).json({ ok: true, until: seen.until });
+      }
+      if (!playVerifier) {
+        return res.status(503).json({
+          error: 'Play purchases are not set up on this server yet.',
+        });
+      }
+      let check;
+      try {
+        check = await playVerifier(productId, purchaseToken);
+      } catch {
+        return res.status(503).json({
+          error: 'Google could not be reached. Please try again.',
+        });
+      }
+      if (!check || !check.valid) {
+        return res.status(400).json({
+          error: 'Google could not confirm that purchase. Please try again.',
+        });
+      }
+      // A renewal stacks on the time still left, so a shop that
+      // pays early never loses days it already bought.
+      const now = new Date();
+      const existing = await store.playUntilForDevice(deviceId);
+      const base = existing && new Date(existing).getTime() > now.getTime()
+        ? existing
+        : now.toISOString();
+      const until = addMonths(base, PLAY_PRODUCTS.get(productId));
+      await store.recordPlayPurchase({
+        purchaseToken,
+        deviceId,
+        phone,
+        productId,
+        until,
+        createdAt: now.toISOString(),
+      });
+      return res.status(200).json({ ok: true, until });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get('/api/play/status', async (req, res, next) => {
+    try {
+      const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId.trim() : '';
+      if (!DEVICE_ID_SHAPE.test(deviceId)) {
+        return res.status(400).json({ error: 'Please send a device ID.' });
+      }
+      const until = await store.playUntilForDevice(deviceId);
+      if (!until) {
+        return res.status(200).json({ status: 'none', expiryDate: null });
+      }
+      const now = Date.now();
+      const untilMs = new Date(until).getTime();
+      let status = 'expired';
+      if (untilMs > now) {
+        status = 'active';
+      } else if (now - untilMs <= PLAY_GRACE_DAYS * 24 * 60 * 60 * 1000) {
+        status = 'grace';
+      }
+      return res.status(200).json({ status, expiryDate: until });
     } catch (err) {
       return next(err);
     }

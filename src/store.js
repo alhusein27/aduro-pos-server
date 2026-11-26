@@ -36,6 +36,7 @@ class MemoryStore {
     this.entries = [];
     this.seqCounter = 0;
     this.trials = new Map();
+    this.playPurchases = new Map();
   }
 
   async init() {}
@@ -59,6 +60,33 @@ class MemoryStore {
 
   async getTrial(deviceId) {
     return this.trials.get(deviceId) || null;
+  }
+
+  // A Play purchase is recorded once, by its purchase token, so
+  // the app can report the same purchase again safely and it is
+  // never counted twice.
+  async findPlayPurchaseByToken(purchaseToken) {
+    return this.playPurchases.get(purchaseToken) || null;
+  }
+
+  async recordPlayPurchase(purchase) {
+    if (!this.playPurchases.has(purchase.purchaseToken)) {
+      this.playPurchases.set(purchase.purchaseToken, purchase);
+    }
+    return this.playPurchases.get(purchase.purchaseToken);
+  }
+
+  // The latest paid until date this device holds from Play
+  // purchases, or null when it has none.
+  async playUntilForDevice(deviceId) {
+    let latest = null;
+    for (const purchase of this.playPurchases.values()) {
+      if (purchase.deviceId !== deviceId) continue;
+      if (latest === null || purchase.until > latest) {
+        latest = purchase.until;
+      }
+    }
+    return latest;
   }
 
   async createShop(shop) {
@@ -373,6 +401,15 @@ class PgStore {
         trial_end text NOT NULL,
         created_at text NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS play_purchases (
+        purchase_token text PRIMARY KEY,
+        device_id text NOT NULL,
+        phone text,
+        product_id text NOT NULL,
+        until text NOT NULL,
+        created_at text NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS play_purchases_device_idx ON play_purchases (device_id);
       CREATE INDEX IF NOT EXISTS devices_token_hash_idx ON devices (token_hash);
       CREATE INDEX IF NOT EXISTS entries_shop_seq_idx ON entries (shop_id, seq);
       CREATE INDEX IF NOT EXISTS join_codes_shop_code_idx ON join_codes (shop_id, code);
@@ -415,6 +452,53 @@ class PgStore {
       trialStart: row.trial_start,
       trialEnd: row.trial_end,
     };
+  }
+
+  // A Play purchase is recorded once, by its purchase token, so
+  // the app can report the same purchase again safely and it is
+  // never counted twice.
+  async findPlayPurchaseByToken(purchaseToken) {
+    const result = await this.pool.query(
+      'SELECT purchase_token, device_id, phone, product_id, until FROM play_purchases WHERE purchase_token = $1',
+      [purchaseToken],
+    );
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      purchaseToken: row.purchase_token,
+      deviceId: row.device_id,
+      phone: row.phone,
+      productId: row.product_id,
+      until: row.until,
+    };
+  }
+
+  async recordPlayPurchase(purchase) {
+    await this.pool.query(
+      `INSERT INTO play_purchases (purchase_token, device_id, phone, product_id, until, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (purchase_token) DO NOTHING`,
+      [
+        purchase.purchaseToken,
+        purchase.deviceId,
+        purchase.phone || null,
+        purchase.productId,
+        purchase.until,
+        purchase.createdAt,
+      ],
+    );
+    return this.findPlayPurchaseByToken(purchase.purchaseToken);
+  }
+
+  // The latest paid until date this device holds from Play
+  // purchases, or null when it has none.
+  async playUntilForDevice(deviceId) {
+    const result = await this.pool.query(
+      'SELECT MAX(until) AS until FROM play_purchases WHERE device_id = $1',
+      [deviceId],
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0].until || null;
   }
 
   async createShop(shop) {

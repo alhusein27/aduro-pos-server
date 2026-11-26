@@ -23,6 +23,23 @@ function accraToday() {
   return accraDateOf(new Date().toISOString());
 }
 
+// Adds whole calendar months to an ISO timestamp and returns an
+// ISO timestamp. The day is clamped to the end of the month it
+// lands in, so 31 January plus one month is 28 February, never
+// 3 March. Returns null when the timestamp cannot be read.
+function addMonths(isoString, months) {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+  return date.toISOString();
+}
+
 // The UTC range of one Accra calendar day, as ISO strings, so the
 // database can filter sales by day instead of loading them all.
 // Ghana keeps no daylight saving time and Accra is UTC+0, so an
@@ -36,4 +53,4 @@ function accraDayRange(date) {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
-module.exports = { accraDateOf, accraToday, accraDayRange };
+module.exports = { accraDateOf, accraToday, accraDayRange, addMonths };

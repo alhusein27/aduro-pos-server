@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.6.0 - 26 November 2026 - Google Play purchases
+
+- The Play build of the app sells the licence through Google
+  Play Billing. Two new routes serve it; the shop build never
+  touches them and keeps paying through the pay hub.
+- POST /api/play/report takes a device ID, a product
+  (aduro_monthly or aduro_yearly) and the Google purchase
+  token. The server asks Google whether the token is real and
+  live before it believes it (src/play_verify.js, the
+  TraderBooks Plus pattern: the service account signs its own
+  token with node:crypto, no new packages). The token is
+  recorded once in a new play_purchases table, so reporting
+  the same purchase again extends nothing, and a token that
+  belongs to another phone is refused. A renewal stacks on
+  the time still left, so paying early never loses days.
+- GET /api/play/status?deviceId= answers active, grace
+  (7 days past the paid until date), expired or none, with
+  the paid until date.
+- Without a Google service account the server still runs;
+  Play reports are refused plainly until one is set
+  (GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, or a file path in
+  GOOGLE_PLAY_SERVICE_ACCOUNT_FILE; the package name can be
+  set with PLAY_PACKAGE_NAME and defaults to
+  com.alhutech.aduropos).
+- Tests: 11 new in test/play.test.js; the Postgres store side
+  was proven on a scratch database (record, read back,
+  duplicate token keeps the first record, latest until wins).
+
 ## 1.5.0 - 25 November 2026 - The widened sync pipe
 
 - Three new sync kinds ride the same push:
